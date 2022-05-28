@@ -33,10 +33,6 @@ fn decode_proof_instruction<T: Pod>(
     expected: ProofInstruction,
     instruction: &Instruction,
 ) -> Result<&T, ProgramError> {
-    if ProofInstruction::decode_type(&instruction.data) != Some(expected) {
-        msg!("decode type failed ----------------------------------");
-    }
-
     if instruction.program_id != zk_token_proof_program::id()
         || ProofInstruction::decode_type(&instruction.data) != Some(expected)
     {
@@ -486,7 +482,7 @@ fn process_transfer(
         )?;
 
         if proof_data.transfer_with_fee_pubkeys.auditor_pubkey
-            != confidential_transfer_mint.auditor_pubkey
+            != confidential_transfer_mint.auditor_encryption_pubkey
         {
             return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
         }
@@ -495,7 +491,7 @@ fn process_transfer(
         if proof_data
             .transfer_with_fee_pubkeys
             .withdraw_withheld_authority_pubkey
-            != confidential_transfer_mint.withdraw_withheld_authority_pubkey
+            != confidential_transfer_mint.withdraw_withheld_authority_encryption_pubkey
         {
             return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
         }
@@ -550,13 +546,20 @@ fn process_transfer(
             &ciphertext_hi,
             new_source_decryptable_available_balance,
         )?;
+
+        let fee_ciphertext = if token_account_info.key == destination_token_account_info.key {
+            None
+        } else {
+            Some(proof_data.fee_ciphertext)
+        };
+
         process_destination_for_transfer(
             destination_token_account_info,
             mint_info,
             &proof_data.transfer_with_fee_pubkeys.destination_pubkey,
             &ciphertext_lo,
             &ciphertext_hi,
-            Some(proof_data.fee_ciphertext),
+            fee_ciphertext,
         )?;
     } else {
         // mint is not extended for fees
@@ -565,7 +568,9 @@ fn process_transfer(
             &previous_instruction,
         )?;
 
-        if proof_data.transfer_pubkeys.auditor_pubkey != confidential_transfer_mint.auditor_pubkey {
+        if proof_data.transfer_pubkeys.auditor_pubkey
+            != confidential_transfer_mint.auditor_encryption_pubkey
+        {
             return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
         }
 
@@ -875,7 +880,7 @@ fn process_withdraw_withheld_tokens_from_mint(
 
     // withdraw withheld authority ElGamal pubkey should match in the proof data and mint
     if proof_data.withdraw_withheld_authority_pubkey
-        != confidential_transfer_mint.withdraw_withheld_authority_pubkey
+        != confidential_transfer_mint.withdraw_withheld_authority_encryption_pubkey
     {
         return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
     }
@@ -998,7 +1003,7 @@ fn process_withdraw_withheld_tokens_from_accounts(
     // withdraw withheld authority ElGamal pubkey should match in the proof data and mint
     let confidential_transfer_mint = mint.get_extension_mut::<ConfidentialTransferMint>()?;
     if proof_data.withdraw_withheld_authority_pubkey
-        != confidential_transfer_mint.withdraw_withheld_authority_pubkey
+        != confidential_transfer_mint.withdraw_withheld_authority_encryption_pubkey
     {
         return Err(TokenError::ConfidentialTransferElGamalPubkeyMismatch.into());
     }
