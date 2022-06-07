@@ -17,8 +17,8 @@ use {
     },
     spl_token_2022::{
         extension::{
-            confidential_transfer, default_account_state, memo_transfer, transfer_fee,
-            ExtensionType, StateWithExtensionsOwned,
+            confidential_transfer, default_account_state, interest_bearing_mint, memo_transfer,
+            transfer_fee, ExtensionType, StateWithExtensionsOwned,
         },
         instruction, native_mint,
         solana_zk_token_sdk::{
@@ -51,6 +51,8 @@ pub enum TokenError {
     AccountInvalidMint,
     #[error("proof error: {0}")]
     Proof(ProofError),
+    #[error("maximum deposit transfer amount exceeded")]
+    MaximumDepositTransferAmountExceeded,
 }
 impl PartialEq for TokenError {
     fn eq(&self, other: &Self) -> bool {
@@ -84,6 +86,10 @@ pub enum ExtensionInitializationParams {
         transfer_fee_basis_points: u16,
         maximum_fee: u64,
     },
+    InterestBearingConfig {
+        rate_authority: Option<Pubkey>,
+        rate: i16,
+    },
 }
 impl ExtensionInitializationParams {
     /// Get the extension type associated with the init params
@@ -93,6 +99,7 @@ impl ExtensionInitializationParams {
             Self::DefaultAccountState { .. } => ExtensionType::DefaultAccountState,
             Self::MintCloseAuthority { .. } => ExtensionType::MintCloseAuthority,
             Self::TransferFeeConfig { .. } => ExtensionType::TransferFeeConfig,
+            Self::InterestBearingConfig { .. } => ExtensionType::InterestBearingConfig,
         }
     }
     /// Generate an appropriate initialization instruction for the given mint
@@ -135,6 +142,15 @@ impl ExtensionInitializationParams {
                 withdraw_withheld_authority.as_ref(),
                 transfer_fee_basis_points,
                 maximum_fee,
+            ),
+            Self::InterestBearingConfig {
+                rate_authority,
+                rate,
+            } => interest_bearing_mint::instruction::initialize(
+                token_program_id,
+                mint,
+                rate_authority,
+                rate,
             ),
         }
     }
@@ -913,6 +929,25 @@ where
         .await
     }
 
+    /// Update interest rate
+    pub async fn update_interest_rate<S2: Signer>(
+        &self,
+        authority: &S2,
+        new_rate: i16,
+    ) -> TokenResult<T::Output> {
+        self.process_ixs(
+            &[interest_bearing_mint::instruction::update_rate(
+                &self.program_id,
+                self.get_address(),
+                &authority.pubkey(),
+                &[],
+                new_rate,
+            )?],
+            &[authority],
+        )
+        .await
+    }
+
     /// Update confidential transfer mint
     pub async fn confidential_transfer_update_mint<S2: Signer>(
         &self,
@@ -943,6 +978,7 @@ where
         authority: &S2,
         elgamal_pubkey: ElGamalPubkey,
         decryptable_zero_balance: AeCiphertext,
+        maximum_pending_balance_credit_counter: u64,
     ) -> TokenResult<T::Output> {
         self.process_ixs(
             &[confidential_transfer::instruction::configure_account(
@@ -951,6 +987,7 @@ where
                 &self.pubkey,
                 elgamal_pubkey.into(),
                 decryptable_zero_balance,
+                maximum_pending_balance_credit_counter,
                 &authority.pubkey(),
                 &[],
             )?],
@@ -963,6 +1000,7 @@ where
         &self,
         token_account: &Pubkey,
         authority: &S2,
+        maximum_pending_balance_credit_counter: u64,
     ) -> TokenResult<(ElGamalKeypair, AeKey)> {
         let elgamal_keypair = ElGamalKeypair::new_rand();
         let ae_key = AeKey::new(authority, token_account).unwrap();
@@ -972,6 +1010,7 @@ where
             authority,
             elgamal_keypair.public,
             ae_key.encrypt(0_u64),
+            maximum_pending_balance_credit_counter,
         )
         .await
         .map(|_| (elgamal_keypair, ae_key))
@@ -1034,6 +1073,10 @@ where
         amount: u64,
         decimals: u8,
     ) -> TokenResult<T::Output> {
+        if amount >> confidential_transfer::MAXIMUM_DEPOSIT_TRANSFER_AMOUNT_BIT_LENGTH != 0 {
+            return Err(TokenError::MaximumDepositTransferAmountExceeded);
+        }
+
         self.process_ixs(
             &[confidential_transfer::instruction::deposit(
                 &self.program_id,
@@ -1105,6 +1148,10 @@ where
         source_elgamal_keypair: &ElGamalKeypair,
         new_source_decryptable_available_balance: AeCiphertext,
     ) -> TokenResult<T::Output> {
+        if amount >> confidential_transfer::MAXIMUM_DEPOSIT_TRANSFER_AMOUNT_BIT_LENGTH != 0 {
+            return Err(TokenError::MaximumDepositTransferAmountExceeded);
+        }
+
         let source_state = self.get_account_info(source_token_account).await.unwrap();
         let source_extension =
             source_state.get_extension::<confidential_transfer::ConfidentialTransferAccount>()?;
@@ -1165,6 +1212,10 @@ where
         new_source_decryptable_available_balance: AeCiphertext,
         epoch_info: &EpochInfo,
     ) -> TokenResult<T::Output> {
+        if amount >> confidential_transfer::MAXIMUM_DEPOSIT_TRANSFER_AMOUNT_BIT_LENGTH != 0 {
+            return Err(TokenError::MaximumDepositTransferAmountExceeded);
+        }
+
         let source_state = self.get_account_info(source_token_account).await.unwrap();
         let source_extension =
             source_state.get_extension::<confidential_transfer::ConfidentialTransferAccount>()?;
