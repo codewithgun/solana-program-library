@@ -14,6 +14,8 @@ import {
     getAccountLen,
     ExtensionType,
     getAssociatedTokenAddressSync,
+    createInitializeAccount2Instruction,
+    createInitializeAccount3Instruction,
 } from '../../src';
 
 chai.use(chaiAsPromised);
@@ -42,6 +44,26 @@ describe('spl-token instructions', () => {
         const ix = createSyncNativeInstruction(Keypair.generate().publicKey);
         expect(ix.programId).to.eql(TOKEN_PROGRAM_ID);
         expect(ix.keys).to.have.length(1);
+    });
+
+    it('InitializeAccount2', () => {
+        const ix = createInitializeAccount2Instruction(
+            Keypair.generate().publicKey,
+            Keypair.generate().publicKey,
+            Keypair.generate().publicKey
+        );
+        expect(ix.programId).to.eql(TOKEN_PROGRAM_ID);
+        expect(ix.keys).to.have.length(3);
+    });
+
+    it('InitializeAccount3', () => {
+        const ix = createInitializeAccount3Instruction(
+            Keypair.generate().publicKey,
+            Keypair.generate().publicKey,
+            Keypair.generate().publicKey
+        );
+        expect(ix.programId).to.eql(TOKEN_PROGRAM_ID);
+        expect(ix.keys).to.have.length(2);
     });
 });
 
